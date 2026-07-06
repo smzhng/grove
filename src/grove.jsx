@@ -66,42 +66,6 @@ const MODEL_FILES = {};
 const GROUND_RADIUS = 26;
 const PLANT_LIMIT_RADIUS = 22;
 
-/* ═══════════════ TEMPORARY: test-mode timing — REMOVE WHEN DONE ═══════════
-   Compresses every session duration ~100x (15 min → ~9s, 5 hr → ~3 min) so
-   timing/growth/wilting can be verified without waiting real hours. Toggle
-   with ?test=true in the URL (?test=false turns it back off); the choice
-   sticks in localStorage until changed again. All it touches is MS_PER_MIN
-   below — delete this block and revert the 4 call sites that use it once
-   verification is done. */
-const TEST_MODE_KEY = "grove-test-mode-v1";
-const TEST_TIME_SCALE = 100;
-
-function resolveTestMode() {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    if (params.has("test")) {
-      const on = params.get("test") !== "false";
-      window.localStorage.setItem(TEST_MODE_KEY, on ? "1" : "0");
-      return on;
-    }
-    return window.localStorage.getItem(TEST_MODE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-const TEST_MODE = resolveTestMode();
-const MS_PER_MIN = TEST_MODE ? (60 * 1000) / TEST_TIME_SCALE : 60 * 1000;
-
-if (TEST_MODE) {
-  console.log(
-    `%c[Grove] TEST MODE ON — session durations compressed ${TEST_TIME_SCALE}x. ` +
-    `Remove ?test=true from the URL or run localStorage.removeItem("${TEST_MODE_KEY}") to disable.`,
-    "color: #b45309; font-weight: bold;"
-  );
-}
-/* ═══════════════════════════════════════════════════════════════════════ */
-
 /* ─────────────────────────────── utilities ────────────────────────────── */
 
 function mulberry32(seed) {
@@ -836,7 +800,7 @@ export default function Grove() {
       root.position.x = session.x;
       root.position.z = session.z;
       root.rotation.y = session.rotY;
-      const endsAt = session.startedAt + session.durationMin * MS_PER_MIN;
+      const endsAt = session.startedAt + session.durationMin * 60 * 1000;
       const prog = Math.min(Math.max((Date.now() - session.startedAt) / (endsAt - session.startedAt), 0), 1);
       root.scale.setScalar(session.scaleVar * growthScale(prog));
       scene.add(root);
@@ -1005,7 +969,7 @@ export default function Grove() {
 
       const session = await storeGet(K_SESSION);
       if (session) {
-        const endsAt = session.startedAt + session.durationMin * MS_PER_MIN;
+        const endsAt = session.startedAt + session.durationMin * 60 * 1000;
         if (Date.now() >= endsAt) {
           // it finished growing while they were away — honor the completed focus
           const rec = { ...session, status: "complete", completedAt: endsAt };
@@ -1132,7 +1096,7 @@ export default function Grove() {
 
   const active = activeRef.current;
   const remainingMs = active ? Math.max(0, active.endsAt - nowTick) : 0;
-  const totalMs = active ? active.session.durationMin * MS_PER_MIN : 1;
+  const totalMs = active ? active.session.durationMin * 60 * 1000 : 1;
   const progress = active ? Math.min(1, 1 - remainingMs / totalMs) : 0;
 
   const RING_R = 17;
@@ -1160,19 +1124,6 @@ export default function Grove() {
   return (
     <div className="grove-app" style={{ position: "relative", overflow: "hidden", background: "#ecefdc" }}>
       <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
-
-      {/* TEMPORARY: test-mode badge — remove alongside MS_PER_MIN */}
-      {TEST_MODE && (
-        <div style={{
-          position: "absolute", top: 20, right: 24, pointerEvents: "none",
-          ...sans, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em",
-          color: "#92400e", background: "rgba(253, 230, 138, 0.9)",
-          border: "1px solid rgba(146, 64, 14, 0.4)", borderRadius: 8,
-          padding: "5px 10px",
-        }}>
-          TEST MODE · {TEST_TIME_SCALE}× SPEED
-        </div>
-      )}
 
       {/* wordmark + garden stats */}
       <div style={{ position: "absolute", top: 20, left: 24, pointerEvents: "none", color: "#38452e" }}>
@@ -1290,7 +1241,7 @@ export default function Grove() {
             <div style={{ ...sans, fontSize: 13.5, color: "#5c6b4d", lineHeight: 1.55, marginBottom: 18 }}>
               You left mid-session. Your {friendlyName(resumeInfo.model)} has{" "}
               <strong style={{ fontVariantNumeric: "tabular-nums" }}>
-                {fmtRemaining(resumeInfo.startedAt + resumeInfo.durationMin * MS_PER_MIN - nowTick)}
+                {fmtRemaining(resumeInfo.startedAt + resumeInfo.durationMin * 60000 - nowTick)}
               </strong>{" "}
               to go — pick the session back up, or let it go.
             </div>
