@@ -58,6 +58,14 @@ const MODEL_FILES = {};
   MODEL_FILES[n] = `${n}.gltf`;
 });
 
+/* ── decoration model names — always present, not tied to sessions ── */
+const ROCKPATH_ROUND_MODELS = ["RockPath_Round_Small_1", "RockPath_Round_Small_2", "RockPath_Round_Small_3", "RockPath_Round_Thin", "RockPath_Round_Wide"];
+const ROCKPATH_SQUARE_MODELS = ["RockPath_Square_Small_1", "RockPath_Square_Small_2", "RockPath_Square_Small_3", "RockPath_Square_Thin", "RockPath_Square_Wide"];
+const ROCK_MEDIUM_MODELS = ["Rock_Medium_1", "Rock_Medium_2", "Rock_Medium_3"];
+const PEBBLE_ROUND_MODELS = ["Pebble_Round_1", "Pebble_Round_2", "Pebble_Round_3", "Pebble_Round_4", "Pebble_Round_5"];
+const PEBBLE_SQUARE_MODELS = ["Pebble_Square_1", "Pebble_Square_2", "Pebble_Square_3", "Pebble_Square_4", "Pebble_Square_5", "Pebble_Square_6"];
+const PETAL_MODELS = ["Petal_1", "Petal_2", "Petal_3", "Petal_4", "Petal_5"];
+
 /* ─────────────────────── real model asset resolution ───────────────────────
    Every .gltf, .bin, and texture .png in assets/models is imported as a URL
    up front, keyed by filename. A GLTFLoader with a URL modifier resolves the
@@ -79,23 +87,29 @@ modelLoadingManager.setURLModifier((url) => {
 });
 const gltfLoader = new GLTFLoader(modelLoadingManager);
 
-// modelName → Promise<THREE.Group | null>, one fetch+parse per model, ever
+// fileName → Promise<THREE.Group | null>, one fetch+parse per file, ever
 const gltfTemplateCache = new Map();
-function loadGLTFTemplate(modelName) {
-  if (!gltfTemplateCache.has(modelName)) {
-    const fileName = MODEL_FILES[modelName];
-    const url = fileName && assetUrlByFile[fileName];
+function loadGLTFFile(fileName) {
+  if (!gltfTemplateCache.has(fileName)) {
+    const url = assetUrlByFile[fileName];
     const promise = url
       ? new Promise((resolve, reject) => {
           gltfLoader.load(url, (gltf) => resolve(gltf.scene), undefined, reject);
         }).catch((err) => {
-          console.warn(`[Grove] failed to load model "${modelName}" (${fileName}) — using placeholder`, err);
+          console.warn(`[Grove] failed to load model file "${fileName}"`, err);
           return null;
         })
       : Promise.resolve(null);
-    gltfTemplateCache.set(modelName, promise);
+    gltfTemplateCache.set(fileName, promise);
   }
-  return gltfTemplateCache.get(modelName);
+  return gltfTemplateCache.get(fileName);
+}
+
+// Loads assets/models/<name>.gltf (cached, cloned per call) — used for
+// decoration pieces that aren't part of the plant tier system.
+async function loadDecorModel(name) {
+  const template = await loadGLTFFile(`${name}.gltf`);
+  return template ? template.clone(true) : null;
 }
 
 const GROUND_RADIUS = 26;
@@ -488,8 +502,9 @@ function buildPlaceholder(name, rng) {
    there's no file for that name or loading fails for any reason — growth,
    wind, wilting and persistence all flow through unchanged either way. */
 async function loadModelForTier(modelName) {
-  if (!MODEL_FILES[modelName]) return null;
-  const template = await loadGLTFTemplate(modelName);
+  const fileName = MODEL_FILES[modelName];
+  if (!fileName) return null;
+  const template = await loadGLTFFile(fileName);
   return template ? template.clone(true) : null;
 }
 
@@ -559,6 +574,21 @@ function preparePlant(root) {
     }
   });
   root.userData.plantHeight = height;
+  return root;
+}
+
+/* Normalizes a static decor piece (rock, pebble, path stone, petal): base at
+   y=0, shadows on. No wind — these don't sway. */
+function normalizeDecor(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  root.position.y += -box.min.y;
+  root.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
   return root;
 }
 
@@ -667,7 +697,7 @@ export default function Grove() {
     ground.receiveShadow = true;
     scene.add(ground);
 
-    /* winding stone path — placeholder RockPath_* pieces along a curve */
+    /* winding stone path — real RockPath_* pieces scattered along a curve */
     const pathCurve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(-19, 0, -6), new THREE.Vector3(-10, 0, 4),
       new THREE.Vector3(-2, 0, -3), new THREE.Vector3(7, 0, 5),
@@ -677,21 +707,37 @@ export default function Grove() {
     const pathRng = mulberry32(777);
     const stoneMats = [mat(PALETTE.stoneA, 0.95), mat(PALETTE.stoneB, 0.95)];
     const stoneCount = 30;
-    for (let i = 0; i < stoneCount; i++) {
-      const t = i / (stoneCount - 1);
-      const p = pathCurve.getPointAt(t);
-      const round = i % 2 === 0; // alternate RockPath_Round / RockPath_Square
-      const s = 0.42 + pathRng() * 0.22;
-      const geo = round
-        ? new THREE.CylinderGeometry(s, s * 1.05, 0.09, 9)
-        : new THREE.BoxGeometry(s * 1.7, 0.09, s * 1.35);
-      const stone = new THREE.Mesh(geo, stoneMats[Math.floor(pathRng() * 2)]);
-      stone.position.set(p.x + (pathRng() - 0.5) * 0.5, 0.045, p.z + (pathRng() - 0.5) * 0.5);
-      stone.rotation.y = pathRng() * Math.PI;
-      stone.castShadow = true;
-      stone.receiveShadow = true;
-      scene.add(stone);
-    }
+    (async () => {
+      for (let i = 0; i < stoneCount; i++) {
+        const t = i / (stoneCount - 1);
+        const p = pathCurve.getPointAt(t);
+        const round = i % 2 === 0; // alternate RockPath_Round / RockPath_Square variants
+        const models = round ? ROCKPATH_ROUND_MODELS : ROCKPATH_SQUARE_MODELS;
+        const modelName = models[Math.floor(pathRng() * models.length)];
+        const s = (0.42 + pathRng() * 0.22) * 0.85;
+        const x = p.x + (pathRng() - 0.5) * 0.5, z = p.z + (pathRng() - 0.5) * 0.5;
+        const rotY = pathRng() * Math.PI;
+        const stone = await loadDecorModel(modelName);
+        if (disposed) return;
+        if (stone) {
+          normalizeDecor(stone);
+          stone.scale.setScalar(s);
+          stone.position.set(x, 0, z);
+          stone.rotation.y = rotY;
+          scene.add(stone);
+        } else {
+          const geo = round
+            ? new THREE.CylinderGeometry(s, s * 1.05, 0.09, 9)
+            : new THREE.BoxGeometry(s * 1.7, 0.09, s * 1.35);
+          const fallback = new THREE.Mesh(geo, stoneMats[Math.floor(pathRng() * 2)]);
+          fallback.position.set(x, 0.045, z);
+          fallback.rotation.y = rotY;
+          fallback.castShadow = true;
+          fallback.receiveShadow = true;
+          scene.add(fallback);
+        }
+      }
+    })();
 
     /* decor scatter — deterministic from the garden seed; more appears
        as the garden fills (rendered count depends on plant count).     */
@@ -707,10 +753,14 @@ export default function Grove() {
       }
       return d;
     }
-    function rebuildDecor(seed, plantCount) {
+    const petalMats = [mat(PALETTE.petalA, 0.7), mat(PALETTE.petalB, 0.7)];
+    petalMats.forEach((m) => (m.side = THREE.DoubleSide));
+    let decorBuildToken = 0;
+    async function rebuildDecor(seed, plantCount) {
       const target = plantCount;
       if (decorBuiltFor === target) return;
       decorBuiltFor = target;
+      const myToken = ++decorBuildToken;
       decorGroup.clear();
       decorRocks.length = 0;
       const rng = mulberry32(seed ^ 0x5eed);
@@ -724,37 +774,71 @@ export default function Grove() {
       const nPetals = 12 + Math.floor(plantCount / 4) * 3;
       let ci = 0;
       const next = () => candidates[ci++ % candidates.length];
-      for (let i = 0; i < nRocks; i++) { // Rock_Medium_1..3 placeholders
+      const stillCurrent = () => !disposed && myToken === decorBuildToken;
+
+      for (let i = 0; i < nRocks; i++) { // Rock_Medium_1..3
         const c = next();
-        const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55 + c.r1 * 0.35, 0), mat(PALETTE.stoneB, 0.98));
-        rock.scale.set(1, 0.6 + c.r2 * 0.2, 1);
-        rock.position.set(c.x, 0.28, c.z);
-        rock.rotation.set(c.r1, c.r2 * Math.PI * 2, c.r3 * 0.3);
-        rock.castShadow = rock.receiveShadow = true;
-        decorGroup.add(rock);
+        const modelName = ROCK_MEDIUM_MODELS[Math.floor(c.r3 * ROCK_MEDIUM_MODELS.length) % ROCK_MEDIUM_MODELS.length];
+        const rock = await loadDecorModel(modelName);
+        if (!stillCurrent()) return;
+        if (rock) {
+          normalizeDecor(rock);
+          rock.scale.setScalar(0.5 + c.r1 * 0.18);
+          rock.position.set(c.x, 0, c.z);
+          rock.rotation.y = c.r2 * Math.PI * 2;
+          decorGroup.add(rock);
+        } else {
+          const fallback = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55 + c.r1 * 0.35, 0), mat(PALETTE.stoneB, 0.98));
+          fallback.scale.set(1, 0.6 + c.r2 * 0.2, 1);
+          fallback.position.set(c.x, 0.28, c.z);
+          fallback.rotation.set(c.r1, c.r2 * Math.PI * 2, c.r3 * 0.3);
+          fallback.castShadow = fallback.receiveShadow = true;
+          decorGroup.add(fallback);
+        }
         decorRocks.push({ x: c.x, z: c.z, footprint: 1.6 });
       }
-      for (let i = 0; i < nPebbles; i++) { // Pebble_Round / Pebble_Square placeholders
+      for (let i = 0; i < nPebbles; i++) { // Pebble_Round / Pebble_Square
         const c = next();
         const round = i % 2 === 0;
+        const models = round ? PEBBLE_ROUND_MODELS : PEBBLE_SQUARE_MODELS;
+        const modelName = models[Math.floor(c.r2 * models.length) % models.length];
         const s = 0.07 + c.r1 * 0.1;
-        const peb = round
-          ? new THREE.Mesh(new THREE.SphereGeometry(s, 7, 6), mat(PALETTE.pebble, 0.98))
-          : new THREE.Mesh(new THREE.BoxGeometry(s * 1.8, s, s * 1.4), mat(PALETTE.pebble, 0.98));
-        if (round) peb.scale.y = 0.55;
-        peb.position.set(c.x, s * 0.4, c.z);
-        peb.rotation.y = c.r2 * Math.PI * 2;
-        peb.castShadow = true;
-        decorGroup.add(peb);
+        const peb = await loadDecorModel(modelName);
+        if (!stillCurrent()) return;
+        if (peb) {
+          normalizeDecor(peb);
+          peb.scale.setScalar(s * 1.6);
+          peb.position.set(c.x, 0, c.z);
+          peb.rotation.y = c.r2 * Math.PI * 2;
+          decorGroup.add(peb);
+        } else {
+          const fallback = round
+            ? new THREE.Mesh(new THREE.SphereGeometry(s, 7, 6), mat(PALETTE.pebble, 0.98))
+            : new THREE.Mesh(new THREE.BoxGeometry(s * 1.8, s, s * 1.4), mat(PALETTE.pebble, 0.98));
+          if (round) fallback.scale.y = 0.55;
+          fallback.position.set(c.x, s * 0.4, c.z);
+          fallback.rotation.y = c.r2 * Math.PI * 2;
+          fallback.castShadow = true;
+          decorGroup.add(fallback);
+        }
       }
-      const petalMats = [mat(PALETTE.petalA, 0.7), mat(PALETTE.petalB, 0.7)];
-      petalMats.forEach((m) => (m.side = THREE.DoubleSide));
-      for (let i = 0; i < nPetals; i++) { // Petal_1..5 placeholders
+      for (let i = 0; i < nPetals; i++) { // Petal_1..5, scattered lightly as the garden fills
         const c = next();
-        const petal = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.09), petalMats[i % 2]);
-        petal.position.set(c.x, 0.012, c.z);
-        petal.rotation.set(-Math.PI / 2 + (c.r1 - 0.5) * 0.5, 0, c.r2 * Math.PI * 2);
-        decorGroup.add(petal);
+        const modelName = PETAL_MODELS[Math.floor(c.r3 * PETAL_MODELS.length) % PETAL_MODELS.length];
+        const petal = await loadDecorModel(modelName);
+        if (!stillCurrent()) return;
+        if (petal) {
+          normalizeDecor(petal);
+          petal.scale.setScalar(0.28 + c.r2 * 0.1);
+          petal.position.set(c.x, 0.004, c.z);
+          petal.rotation.y = c.r2 * Math.PI * 2;
+          decorGroup.add(petal);
+        } else {
+          const fallback = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.09), petalMats[i % 2]);
+          fallback.position.set(c.x, 0.012, c.z);
+          fallback.rotation.set(-Math.PI / 2 + (c.r1 - 0.5) * 0.5, 0, c.r2 * Math.PI * 2);
+          decorGroup.add(fallback);
+        }
       }
     }
 
