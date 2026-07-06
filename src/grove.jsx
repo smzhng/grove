@@ -1122,7 +1122,7 @@ export default function Grove() {
   const btnGhost = { ...btnBase, background: "transparent", color: "#5c6b4d", border: "1px solid rgba(90,105,70,0.3)" };
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100vh", overflow: "hidden", background: "#ecefdc" }}>
+    <div className="grove-app" style={{ position: "relative", overflow: "hidden", background: "#ecefdc" }}>
       <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
 
       {/* wordmark + garden stats */}
