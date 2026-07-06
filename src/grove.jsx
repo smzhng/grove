@@ -1,25 +1,20 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 /* ═══════════════════════════════════════════════════════════════════════
    GROVE — a focus timer that grows a 3D garden
    ─────────────────────────────────────────────────────────────────────────
-   MODEL LOADING — CURRENT STATE
-   Every plant is built from built-in Three.js primitives (Cone, Sphere,
-   Cylinder, Box, Icosahedron) behind one factory: createPlantModel().
-   That factory first calls the stub loadModelForTier() — which currently
-   returns null — and falls back to the primitive placeholders.
-
-   WIRING IN REAL MODELS LATER
-   Implement loadModelForTier(modelName) to asynchronously load and return
-   an Object3D scene graph for MODEL_FILES[modelName] (every tier name is
-   already mapped to "<Name>.gltf" below; keep each model's .bin and
-   texture .png files alongside it so its real textures resolve).
-   Nothing else needs to change: preparePlant() — which normalizes the
-   base to y=0, computes plant height, enables shadows, and injects the
-   wind shader per-mesh using world-space Y offsets — works on arbitrary
-   nested scene graphs. Tier logic, placement, growth, wilting and
-   persistence are all model-agnostic.
+   MODEL LOADING
+   Every plant is built behind one factory: createPlantModel(). It calls
+   loadModelForTier(), which loads the real GLTF for that model name (from
+   assets/models/, cached per name, cloned per plant instance) and falls
+   back to a primitive placeholder if that model has no file or fails to
+   load. preparePlant() — which normalizes the base to y=0, computes plant
+   height, enables shadows, and injects the wind shader per-mesh using
+   world-space Y offsets — works on arbitrary nested scene graphs, real or
+   placeholder. Tier logic, placement, growth, wilting and persistence are
+   all model-agnostic.
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* ───────────────────────────── tiers & models ─────────────────────────── */
@@ -62,6 +57,46 @@ const MODEL_FILES = {};
 [...Object.values(TIERS).flatMap((t) => t.models), ...DEAD_MODELS].forEach((n) => {
   MODEL_FILES[n] = `${n}.gltf`;
 });
+
+/* ─────────────────────── real model asset resolution ───────────────────────
+   Every .gltf, .bin, and texture .png in assets/models is imported as a URL
+   up front, keyed by filename. A GLTFLoader with a URL modifier resolves the
+   relative "Leaves.png" / "Clover_1.bin" references inside each .gltf JSON
+   against this map, so assets load correctly both in dev and in a hashed
+   production build.                                                        */
+const modelAssetUrls = import.meta.glob("./assets/models/*", {
+  eager: true, query: "?url", import: "default",
+});
+const assetUrlByFile = {};
+for (const [path, url] of Object.entries(modelAssetUrls)) {
+  assetUrlByFile[path.split("/").pop()] = url;
+}
+
+const modelLoadingManager = new THREE.LoadingManager();
+modelLoadingManager.setURLModifier((url) => {
+  const file = decodeURIComponent(url.split("/").pop().split("?")[0]);
+  return assetUrlByFile[file] || url;
+});
+const gltfLoader = new GLTFLoader(modelLoadingManager);
+
+// modelName → Promise<THREE.Group | null>, one fetch+parse per model, ever
+const gltfTemplateCache = new Map();
+function loadGLTFTemplate(modelName) {
+  if (!gltfTemplateCache.has(modelName)) {
+    const fileName = MODEL_FILES[modelName];
+    const url = fileName && assetUrlByFile[fileName];
+    const promise = url
+      ? new Promise((resolve, reject) => {
+          gltfLoader.load(url, (gltf) => resolve(gltf.scene), undefined, reject);
+        }).catch((err) => {
+          console.warn(`[Grove] failed to load model "${modelName}" (${fileName}) — using placeholder`, err);
+          return null;
+        })
+      : Promise.resolve(null);
+    gltfTemplateCache.set(modelName, promise);
+  }
+  return gltfTemplateCache.get(modelName);
+}
 
 const GROUND_RADIUS = 26;
 const PLANT_LIMIT_RADIUS = 22;
@@ -412,13 +447,14 @@ function buildPlaceholder(name, rng) {
   return buildGrass(rng, 0.4, 5, PALETTE.leafA); // safe fallback
 }
 
-/* ─────────────────── MODEL LOADING STUB — wire real models here ───────────────────
-   Later, make this load and return an Object3D for MODEL_FILES[modelName]
-   (with its real textures). Returning a scene graph here automatically
-   replaces the primitive placeholder for that model everywhere — growth,
-   wind, wilting and persistence all flow through unchanged.               */
+/* Loads the real GLTF for modelName (cached per name) and hands back a fresh
+   clone for this plant instance. Falls back to the primitive placeholder if
+   there's no file for that name or loading fails for any reason — growth,
+   wind, wilting and persistence all flow through unchanged either way. */
 async function loadModelForTier(modelName) {
-  return null; // no real model loading in this preview — placeholders below are used
+  if (!MODEL_FILES[modelName]) return null;
+  const template = await loadGLTFTemplate(modelName);
+  return template ? template.clone(true) : null;
 }
 
 /* The single factory every plant goes through. */
