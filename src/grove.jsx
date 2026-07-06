@@ -145,19 +145,19 @@ const memFallback = {};
 
 async function storeGet(key) {
   try {
-    const r = await window.storage.get(key);
-    return r ? JSON.parse(r.value) : null;
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
   } catch {
     return memFallback[key] ?? null;
   }
 }
 async function storeSet(key, obj) {
   memFallback[key] = obj;
-  try { await window.storage.set(key, JSON.stringify(obj)); } catch { /* in-memory only */ }
+  try { window.localStorage.setItem(key, JSON.stringify(obj)); } catch { /* in-memory only */ }
 }
 async function storeDelete(key) {
   delete memFallback[key];
-  try { await window.storage.delete(key); } catch { /* in-memory only */ }
+  try { window.localStorage.removeItem(key); } catch { /* in-memory only */ }
 }
 
 /* ──────────────────────── placeholder model library ────────────────────
