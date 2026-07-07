@@ -647,9 +647,22 @@ export default function Grove() {
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const skyColor = new THREE.Color(0xecefdc);
-    scene.background = skyColor;
-    scene.fog = new THREE.Fog(skyColor, 34, 72);
+    /* gradient sky — deeper blue overhead fading to a pale horizon */
+    const skyCanvas = document.createElement("canvas");
+    skyCanvas.width = 2;
+    skyCanvas.height = 512;
+    const skyCtx = skyCanvas.getContext("2d");
+    const skyGrad = skyCtx.createLinearGradient(0, 0, 0, 512);
+    skyGrad.addColorStop(0, "#7fb2d9");
+    skyGrad.addColorStop(0.55, "#abd0e9");
+    skyGrad.addColorStop(1, "#e3f0f7");
+    skyCtx.fillStyle = skyGrad;
+    skyCtx.fillRect(0, 0, 2, 512);
+    const skyTex = new THREE.CanvasTexture(skyCanvas);
+    skyTex.encoding = THREE.sRGBEncoding;
+    scene.background = skyTex;
+    const horizonColor = new THREE.Color(0xddecf6);
+    scene.fog = new THREE.Fog(horizonColor, 34, 72);
 
     const camera = new THREE.PerspectiveCamera(42, mount.clientWidth / mount.clientHeight, 0.1, 200);
 
@@ -664,7 +677,7 @@ export default function Grove() {
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.02;
     scene.add(sun);
-    scene.add(new THREE.HemisphereLight(0xd9ecff, 0x9c8a63, 0.55));
+    scene.add(new THREE.HemisphereLight(0xcbe2f7, 0xa89369, 0.6));
 
     /* procedural ground — soft grass noise on a diorama disc */
     const gc = document.createElement("canvas");
@@ -1278,7 +1291,7 @@ export default function Grove() {
   const btnGhost = { ...btnBase, background: "transparent", color: "#5c6b4d", border: "1px solid rgba(90,105,70,0.3)" };
 
   return (
-    <div className="grove-app" style={{ position: "relative", overflow: "hidden", background: "#ecefdc" }}>
+    <div className="grove-app" style={{ position: "relative", overflow: "hidden", background: "linear-gradient(180deg, #7fb2d9 0%, #abd0e9 55%, #e3f0f7 100%)" }}>
       <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
 
       {/* TEMPORARY: test-mode badge — remove alongside MS_PER_MIN */}
@@ -1306,7 +1319,7 @@ export default function Grove() {
 
       {/* loading veil */}
       {mode === "loading" && (
-        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "#ecefdc" }}>
+        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "linear-gradient(180deg, #7fb2d9 0%, #abd0e9 55%, #e3f0f7 100%)" }}>
           <div style={{ ...font, fontSize: 18, color: "#5c6b4d" }}>Tending the garden…</div>
         </div>
       )}
